@@ -108,6 +108,60 @@ try {
 }
 ```
 
+### Setting up Listener using RabbitMQ
+
+If you used RabbitMQ in Step 3, follow the steps below to set up the listener.
+
+First, we need to connect the listener to the RabbitMQ Server aswell. We used the `amqplib` package in the previous step, so we will use it here as well.
+
+```ts
+import amqp from 'amqplib'
+
+const RABBITMQ_URL = process.env.RABBITMQ_URL as string;
+const EXCHANGE_NAME = 'events';
+const QUEUE_NAME = 'event-queue';
+
+const init = async () => {
+  const connection = await amqp.connect(RABBITMQ_URL);
+  const channel = await connection.createChannel();
+
+  await channel.assertExchange(EXCHANGE_NAME, 'direct', { durable: false });
+  await channel.assertQueue(QUEUE_NAME, { durable: false });
+  await channel.bindQueue(QUEUE_NAME, EXCHANGE_NAME, 'events');
+  // Same code here to ensure the exchange and queue are created and bound
+
+  return channel;
+};
+```
+
+Now that we have the RabbitMQ connection setup, we can go ahead and add the code necessary for handling the events.
+
+```ts
+const channel = await init();
+
+channel.consume(QUEUE_NAME, async (msg) => {
+  const data = JSON.parse(msg.content.toString());
+
+  try {
+    // Trigger the raw event, you may remove this if you don't need it
+    bot.events.raw?.(data.payload, data.shardId)
+
+    if (data.t) {
+      bot.handlers[data.t]?.(bot, data.payload, data.shardId)
+    }
+  } catch (error: any) {
+    console.log(error)
+  }
+});
+```
+
+And that's it! You now have a listener that will listen for events coming from the shards and process them accordingly.
+
+Some further improvements you can make to your usage of RabbitMQ are:
+
+- Use a connection pool to manage connections to RabbitMQ
+- Use a dedicated Queue with a TTL for InteractionCreate Events to ensure that they are processed in time and dropped if they are not processed in time
+
 ## Connecting To REST
 
 Alright, now we need to start making our connection to the rest proxy work. That way, when our bot needs to make a rest request, it will use the proxy.

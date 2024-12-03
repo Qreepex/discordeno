@@ -635,6 +635,66 @@ We should take the time here to implement a small queue where we can store event
 
 You could use message brokers like RabbitMQ if you'd like, or could implement a simple queue with an array that will hold all the missed events and send them once your bot process is ready again. Keep in mind that interaction create events needs special handling, you might want to send a message to user on non-deferrable interactions and defer the remaining so that you can process them once your bot process is ready.
 
+#### Event Queue using RabbitMQ
+
+[RabbitMQ](https://rabbitmq.com) is a message broker that allows you to send and receive messages between different systems. It is a great tool to use for event queues. The following are instructions for a small setup with RabbitMQ. The instructions assume that you already have an accessible instance of RabbitMQ running, e.g. with [Docker](https://hub.docker.com/_/rabbitmq).
+
+RabbitMQ works with Exchanges, Queues, and Bindings. Exchanges receive messages from producers and route them to queues. Queues store messages that are consumed by consumers. Bindings connect exchanges to queues. In this setup, we will create a direct exchange and a queue that will store the events.
+
+We will use the [amqplib](https://www.npmjs.com/package/amqplib) package to interact with RabbitMQ. Install it with `npm install amqplib`. You can also use more advanced packages like [amqp-connection-manager](https://www.npmjs.com/package/amqp-connection-manager) for more advanced configuration.
+
+First, we need to initialize the connection to RabbitMQ and create the exchange and queue. Create a file called `services/gateway/queue.ts` and add the following code:
+
+```ts
+import amqp from 'amqplib'
+
+const RABBITMQ_URL = process.env.RABBITMQ_URL as string;
+const EXCHANGE_NAME = 'events';
+const QUEUE_NAME = 'event-queue';
+
+export const init = async () => {
+  const connection = await amqp.connect(RABBITMQ_URL);
+  const channel = await connection.createChannel();
+
+  await channel.assertExchange(EXCHANGE_NAME, 'direct', { durable: true });
+  await channel.assertQueue(QUEUE_NAME, { durable: true });
+  await channel.bindQueue(QUEUE_NAME, EXCHANGE_NAME, '');
+
+  return channel;
+};
+```
+You can find more information about the used options in the [RabbitMQ documentation](https://rabbitmq.com/docs).
+
+We also need a function to send events to the queue. Add the following code to the `services/gateway/queue.ts` file:
+
+```ts
+export const sendToQueue = async (channel, event) => {
+  await channel.publish(EXCHANGE_NAME, '', Buffer.from(JSON.stringify(event)), { persistent: true });
+};
+```
+
+Next, we need to initialize the connection to RabbitMQ. Add the following code to the `services/gateway/index.ts` file:
+  
+```ts
+// other imports
+import { init as initQueue, sendToQueue } from './queue.ts'
+
+// other code
+const channel = await initQueue()
+```
+
+
+Before, we used the `fetch` function to send events to the event listener. Now, we will use the `sendToQueue` function to send events to the queue. Replace the `fetch` function in the `message` event with the following code:
+
+```ts
+await sendToQueue(channel, { payload, shardId: shard.id });
+```
+
+That's it. In Step 4, you can learn about how to consume the events from the Queue and process them.
+
+In Summary, these steps will initialize the connection to RabbitMQ and create the exchange and queue. The `channel` object will be used to send events to the queue. The `sendToQueue` function will send the events to the queue. You can now send events to the queue instead of directly to the event listener.
+
+
 ## Resharding
 
 Now let's enable resharding on our bot so we don't need to deal with it. Remember, Discord stops allowing your bot to be added to new servers when you max out your existing max shards. Consider a bot started with 150 shards operating on 150,000 servers. Your shards support a maximum of 150 \* 2500 = 375,000 servers. Your bot will be unable to join new servers once it reaches this point until it reshards. Discordeno provides 2 types of resharding: Automated and Manual. You can also have both.
